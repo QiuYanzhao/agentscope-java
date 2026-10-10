@@ -24,25 +24,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * WorkspaceSetupExample — Demonstrates the workspace directory layout and how each file is
- * loaded into the agent's system prompt.
+ * WorkspaceSetupExample — 演示工作区目录结构，以及每个文件是如何被加载进 Agent 的系统提示词的。
  *
- * <p>What this example shows:
+ * <p>本示例展示的内容：
  * <ol>
- *   <li><b>Workspace layout</b> — creates a full workspace with {@code AGENTS.md},
- *       {@code knowledge/KNOWLEDGE.md}, {@code subagents/researcher.md}, and a custom
- *       {@code PREFERENCES.md}.</li>
- *   <li><b>{@code AGENTS.md} injection</b> — the persona file is injected into the system
- *       prompt every reasoning step.</li>
- *   <li><b>Knowledge directory</b> — {@code KNOWLEDGE.md} is injected in full; other files
- *       under {@code knowledge/} are listed by path and read on demand.</li>
- *   <li><b>{@code additionalContextFile}</b> — custom files injected alongside the standard
- *       workspace content.</li>
- *   <li><b>Subagent spec files</b> — dropping a {@code .md} in {@code subagents/} makes it
- *       available via {@code agent_spawn}.</li>
+ *   <li><b>工作区结构</b> — 创建一个完整的工作区，包含 {@code AGENTS.md}、
+ *       {@code knowledge/KNOWLEDGE.md}、{@code subagents/researcher.md} 以及自定义的
+ *       {@code PREFERENCES.md}。</li>
+ *   <li><b>{@code AGENTS.md} 注入</b> — 角色设定文件会在每个推理步骤中被注入系统提示词。</li>
+ *   <li><b>知识库目录</b> — {@code KNOWLEDGE.md} 会被完整注入；{@code knowledge/} 下的其他文件
+ *       只会按路径列出，由 Agent 按需读取。</li>
+ *   <li><b>{@code additionalContextFile}</b> — 自定义文件会与标准工作区内容一起被注入。</li>
+ *   <li><b>子代理规格文件</b> — 在 {@code subagents/} 目录下放置一个 {@code .md} 文件，
+ *       即可通过 {@code agent_spawn} 使用该子代理。</li>
  * </ol>
  *
- * <p><b>Run:</b>
+ * <p><b>运行方式：</b>
  * <pre>
  *   export DASHSCOPE_API_KEY=your_key
  *   mvn exec:java -pl agentscope-examples/documentation \
@@ -53,89 +50,89 @@ public class WorkspaceSetupExample {
 
     public static void main(String[] args) throws Exception {
         System.out.println("\n" + "=".repeat(60));
-        System.out.println("Workspace — Directory Layout & Content Injection");
+        System.out.println("工作区 — 目录结构与内容注入");
         System.out.println("=".repeat(60) + "\n");
 
-        // ── Create a workspace with all key files ───────────────────────────
+        // ── 创建包含所有关键文件的工作区 ────────────────────────────────────
 
         Path workspace = Files.createTempDirectory("agentscope-workspace-example");
 
-        // AGENTS.md — persona and behavior rules
+        // AGENTS.md — 角色设定与行为规则
         Files.writeString(
                 workspace.resolve("AGENTS.md"),
                 """
-                # Project Assistant
+                # 项目助手
 
-                You are a project management assistant for the "Phoenix" project.
+                你是 "Phoenix" 项目的项目管理助手。
 
-                ## Behavior
-                - Always greet the user by referencing the Phoenix project.
-                - Use the knowledge base to answer domain questions.
-                - Delegate research tasks to the researcher subagent.
-                - Refer to PREFERENCES.md for response formatting rules.
+                ## 行为规则
+                - 向用户打招呼时，始终提及 Phoenix 项目。
+                - 回答领域问题时，使用知识库。
+                - 将调研任务委派给 researcher 子代理。
+                - 回答格式规范请参考 PREFERENCES.md。
                 """);
 
-        // knowledge/KNOWLEDGE.md — domain knowledge entry point
+        // knowledge/KNOWLEDGE.md — 领域知识入口文件
         Path knowledgeDir = Files.createDirectories(workspace.resolve("knowledge"));
         Files.writeString(
                 knowledgeDir.resolve("KNOWLEDGE.md"),
                 """
-                # Phoenix Project Knowledge Base
+                # Phoenix 项目知识库
 
-                ## Overview
-                Phoenix is a cloud-native microservices platform built with Java 17+
-                and Spring Boot 3.x. It consists of 5 core services:
-                - gateway-service (API routing)
-                - auth-service (OAuth 2.0 + JWT)
-                - user-service (user management)
-                - order-service (order processing)
-                - notification-service (email + push)
+                ## 项目概述
+                Phoenix 是一个云原生微服务平台，基于 Java 17+ 和 Spring Boot 3.x 构建，
+                由 5 个核心服务组成：
+                - gateway-service（API 路由）
+                - auth-service（OAuth 2.0 + JWT）
+                - user-service（用户管理）
+                - order-service（订单处理）
+                - notification-service（邮件 + 推送）
 
-                ## Tech Stack
-                - Runtime: JDK 21, Spring Boot 3.3
-                - Database: PostgreSQL 16 + Redis 7
-                - Messaging: Apache Kafka 3.7
-                - Deployment: Kubernetes 1.29 on AWS EKS
+                ## 技术栈
+                - 运行时：JDK 21、Spring Boot 3.3
+                - 数据库：PostgreSQL 16 + Redis 7
+                - 消息队列：Apache Kafka 3.7
+                - 部署：AWS EKS 上的 Kubernetes 1.29
                 """);
 
-        // knowledge/api-conventions.md — additional reference (listed but not injected)
+        // knowledge/api-conventions.md — 附加参考文件（仅列出路径，不注入提示词）
         Files.writeString(
                 knowledgeDir.resolve("api-conventions.md"),
                 """
-                # API Conventions
+                # API 约定
 
-                - All endpoints use kebab-case: `/api/v1/user-profiles`
-                - Pagination via `?page=0&size=20`
-                - Error responses follow RFC 7807 Problem Details
-                - Rate limiting: 100 req/min per API key
+                - 所有端点使用 kebab-case 命名：`/api/v1/user-profiles`
+                - 分页参数为 `?page=0&size=20`
+                - 错误响应遵循 RFC 7807 Problem Details 规范
+                - 速率限制：每个 API 密钥 100 次请求/分钟
                 """);
 
-        // subagents/researcher.md — subagent declaration
+        // subagents/researcher.md — 子代理声明文件
         Path subagentsDir = Files.createDirectories(workspace.resolve("subagents"));
         Files.writeString(
                 subagentsDir.resolve("researcher.md"),
                 """
                 ---
-                description: Research specialist. Use when the user needs investigation on a topic.
+                description: 调研专家。当用户需要对某个主题进行调研时使用。
                 ---
 
-                You are a research subagent for the Phoenix project.
-                Investigate the given topic and provide a concise summary.
+                你是 Phoenix 项目的调研子代理。
+                调研指定的主题，并给出简洁的总结。
                 """);
 
-        // PREFERENCES.md — additional context file
+        // PREFERENCES.md — 附加上下文文件
         Files.writeString(
                 workspace.resolve("PREFERENCES.md"),
                 """
-                # Response Preferences
+                # 回答偏好
 
-                - Use bullet points for lists, not numbered lists.
-                - Keep responses under 200 words.
-                - Always end with a "Next steps" section.
+                - 列表使用项目符号，不要使用编号列表。
+                - 回答控制在 200 字以内。
+                - 结尾必须附上"后续步骤"部分。
                 """);
 
-        System.out.println("Workspace created at: " + workspace);
-        System.out.println("Contents:");
+        System.out.println("工作区已创建于：" + workspace);
+        System.out.println("内容：");
         Files.walk(workspace)
                 .filter(p -> !p.equals(workspace))
                 .forEach(
@@ -144,14 +141,14 @@ public class WorkspaceSetupExample {
                             System.out.println("  " + (Files.isDirectory(p) ? rel + "/" : rel));
                         });
 
-        // ── Build the agent with the workspace ──────────────────────────────
+        // ── 使用工作区构建 Agent ───────────────────────────────────────────
 
-        System.out.println("\n── Building HarnessAgent with workspace ──\n");
+        System.out.println("\n── 正在使用工作区构建 HarnessAgent ──\n");
 
         HarnessAgent agent =
                 HarnessAgent.builder()
                         .name("phoenix-assistant")
-                        .sysPrompt("You are the Phoenix project assistant.")
+                        .sysPrompt("你是 Phoenix 项目的助手。")
                         .model("dashscope:qwen-plus")
                         .workspace(workspace)
                         .additionalContextFile("PREFERENCES.md")
@@ -160,11 +157,11 @@ public class WorkspaceSetupExample {
 
         RuntimeContext ctx = RuntimeContext.builder().sessionId("workspace-demo").build();
 
-        // ── Ask questions that exercise workspace content ────────────────────
+        // ── 提出利用工作区内容回答的问题 ────────────────────────────────────
 
-        System.out.println("── Question 1: Does the agent know the project persona? ──\n");
-        System.out.print("Agent: ");
-        agent.streamEvents(new UserMessage("Introduce yourself and the project you support."), ctx)
+        System.out.println("── 问题 1：Agent 是否了解项目角色设定？ ──\n");
+        System.out.print("Agent：");
+        agent.streamEvents(new UserMessage("请做个自我介绍，并说明你支持的项目。"), ctx)
                 .doOnNext(
                         event -> {
                             if (event instanceof TextBlockDeltaEvent e) {
@@ -173,10 +170,9 @@ public class WorkspaceSetupExample {
                         })
                 .blockLast();
 
-        System.out.println("\n\n── Question 2: Does the agent know the knowledge base? ──\n");
-        System.out.print("Agent: ");
-        agent.streamEvents(
-                        new UserMessage("What services does the Phoenix platform consist of?"), ctx)
+        System.out.println("\n\n── 问题 2：Agent 是否了解知识库？ ──\n");
+        System.out.print("Agent：");
+        agent.streamEvents(new UserMessage("Phoenix 平台由哪些服务组成？"), ctx)
                 .doOnNext(
                         event -> {
                             if (event instanceof TextBlockDeltaEvent e) {
@@ -185,25 +181,21 @@ public class WorkspaceSetupExample {
                         })
                 .blockLast();
 
-        System.out.println("\n\n── Question 3: Can the agent read knowledge reference files? ──\n");
-        System.out.print("Agent: ");
-        agent.streamEvents(
-                        new UserMessage(
-                                "What are the API conventions for the project? Check the knowledge"
-                                        + " base files for details."),
-                        ctx)
+        System.out.println("\n\n── 问题 3：Agent 能否读取知识库参考文件？ ──\n");
+        System.out.print("Agent：");
+        agent.streamEvents(new UserMessage("这个项目的 API 约定是什么？请查看知识库文件了解详情。"), ctx)
                 .doOnNext(
                         event -> {
                             if (event instanceof TextBlockDeltaEvent e) {
                                 System.out.print(e.getDelta());
                             } else if (event instanceof ToolCallStartEvent e) {
-                                System.out.printf("%n[TOOL] %s%n", e.getToolCallName());
+                                System.out.printf("%n[工具] %s%n", e.getToolCallName());
                             }
                         })
                 .blockLast();
 
         System.out.println("\n\n" + "=".repeat(60));
-        System.out.println("Done. Workspace at: " + workspace);
+        System.out.println("完成。工作区位于：" + workspace);
         System.out.println("=".repeat(60));
     }
 }

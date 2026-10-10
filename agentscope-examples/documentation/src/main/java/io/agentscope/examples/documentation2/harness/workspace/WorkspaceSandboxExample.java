@@ -27,32 +27,30 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * WorkspaceSandboxExample — Filesystem mode 2 (sandbox): files and commands run inside an
- * isolated Docker container. The host is untouched and the sandbox workspace survives across
- * calls.
+ * WorkspaceSandboxExample — 文件系统模式 2（沙箱）：文件与命令在隔离的 Docker 容器内运行。
+ * 宿主机不受影响，且沙箱工作区在多次调用之间持续保留。
  *
- * <p>What this example shows:
+ * <p>本示例展示的内容：
  * <ol>
- *   <li><b>{@link DockerFilesystemSpec}</b> — all file operations and shell commands are routed
- *       into a Docker container.</li>
- *   <li><b>{@link IsolationScope#USER}</b> — each user gets a separate sandbox instance; the
- *       same user's calls reuse (or restore from snapshot) the same sandbox.</li>
- *   <li><b>Cross-call recovery</b> — files created in the sandbox by one call are visible in
- *       the next call for the same user.</li>
- *   <li><b>Host workspace projection</b> — {@code AGENTS.md}, {@code skills/}, etc. are synced
- *       from the host into the sandbox at each start, content-hash-gated.</li>
+ *   <li><b>{@link DockerFilesystemSpec}</b> — 所有文件操作和 shell 命令都会被路由到 Docker
+ *       容器内执行。</li>
+ *   <li><b>{@link IsolationScope#USER}</b> — 每个用户拥有独立的沙箱实例；同一用户的多次调用
+ *       会复用同一个沙箱（或从快照恢复）。</li>
+ *   <li><b>跨调用持久化</b> — 某次调用在沙箱中创建的文件，在同一用户的下一次调用中仍然可见。</li>
+ *   <li><b>宿主机工作区投影</b> — {@code AGENTS.md}、{@code skills/} 等会在每次启动时从宿主机
+ *       同步进沙箱，并通过内容哈希进行校验（避免重复同步）。</li>
  * </ol>
  *
- * <p><b>Prerequisites:</b>
+ * <p><b>前置条件：</b>
  * <ul>
- *   <li>Docker daemon running ({@code docker info} should succeed).</li>
- *   <li>The image {@code ubuntu:24.04} pulled or pullable.</li>
- *   <li>DashScope API key set as {@code DASHSCOPE_API_KEY}.</li>
+ *   <li>Docker 守护进程正在运行（{@code docker info} 应能成功执行）。</li>
+ *   <li>镜像 {@code ubuntu:24.04} 已拉取或可以拉取。</li>
+ *   <li>DashScope API 密钥已设置为环境变量 {@code DASHSCOPE_API_KEY}。</li>
  * </ul>
  *
- * <p><b>Distributed deployment (multi-replica):</b> To share sandbox state across replicas,
- * configure a {@link io.agentscope.harness.agent.DistributedStore}. It auto-wires
- * {@code AgentStateStore}, {@code SandboxSnapshotSpec}, and {@code SandboxExecutionGuard}:
+ * <p><b>分布式部署（多副本）：</b>若要在多个副本之间共享沙箱状态，可配置
+ * {@link io.agentscope.harness.agent.DistributedStore}。它会自动装配
+ * {@code AgentStateStore}、{@code SandboxSnapshotSpec} 和 {@code SandboxExecutionGuard}：
  * <pre>
  *   DistributedStore store = RedisDistributedStore.fromJedis(jedis);
  *   HarnessAgent.builder()
@@ -63,7 +61,7 @@ import java.nio.file.Path;
  *       .build();
  * </pre>
  *
- * <p><b>Run:</b>
+ * <p><b>运行方式：</b>
  * <pre>
  *   export DASHSCOPE_API_KEY=your_key
  *   mvn exec:java -pl agentscope-examples/documentation \
@@ -74,7 +72,7 @@ public class WorkspaceSandboxExample {
 
     public static void main(String[] args) throws Exception {
         System.out.println("\n" + "=".repeat(60));
-        System.out.println("Filesystem Mode 2 — Docker Sandbox (isolated execution)");
+        System.out.println("文件系统模式 2 — Docker 沙箱（隔离执行）");
         System.out.println("=".repeat(60) + "\n");
 
         Path workspace = Files.createTempDirectory("agentscope-sandbox-example");
@@ -82,18 +80,18 @@ public class WorkspaceSandboxExample {
         Files.writeString(
                 workspace.resolve("AGENTS.md"),
                 """
-                # Sandbox Agent
+                # 沙箱助手
 
-                You are a coding assistant running inside a Docker sandbox.
-                All file operations and shell commands execute inside the container.
-                The host is untouched.
-                Keep answers concise (under two sentences).
+                你是一个运行在 Docker 沙箱中的编程助手。
+                所有文件操作和 shell 命令都在容器内执行。
+                宿主机不受影响。
+                回答请保持简洁（不超过两句话）。
                 """);
 
         HarnessAgent agent =
                 HarnessAgent.builder()
                         .name("sandbox-agent")
-                        .sysPrompt("You are a coding assistant in a Docker sandbox.")
+                        .sysPrompt("你是 Docker 沙箱中的编程助手。")
                         .model("dashscope:qwen-plus")
                         .workspace(workspace)
                         .filesystem(
@@ -102,65 +100,58 @@ public class WorkspaceSandboxExample {
                                         .isolationScope(IsolationScope.USER))
                         .build();
 
-        // ── Alice: run commands inside the sandbox ──────────────────────────
+        // ── Alice：在沙箱内执行命令 ─────────────────────────────────────────
 
-        System.out.println("── Alice call 1: create a file inside the sandbox ──\n");
+        System.out.println("── Alice 第 1 次调用：在沙箱内创建文件 ──\n");
 
         RuntimeContext aliceCtx =
                 RuntimeContext.builder().userId("alice").sessionId("alice-s1").build();
 
-        System.out.print("Agent: ");
+        System.out.print("Agent：");
         agent.streamEvents(
                         new UserMessage(
-                                "Create a file /workspace/hello.txt containing 'Hello from sandbox'"
-                                        + " and then cat it to verify."),
+                                "创建文件 /workspace/hello.txt，内容为 'Hello from sandbox'，"
+                                        + "然后用 cat 查看以确认。"),
                         aliceCtx)
                 .doOnNext(
                         event -> {
                             if (event instanceof TextBlockDeltaEvent e) {
                                 System.out.print(e.getDelta());
                             } else if (event instanceof ToolCallStartEvent e) {
-                                System.out.printf("%n  [tool] %s%n", e.getToolCallName());
+                                System.out.printf("%n  [工具] %s%n", e.getToolCallName());
                             }
                         })
                 .blockLast();
 
-        // ── Alice call 2: verify cross-call persistence ─────────────────────
+        // ── Alice 第 2 次调用：验证跨调用的文件持久化 ───────────────────────
 
-        System.out.println("\n\n── Alice call 2: verify the file survives across calls ──\n");
+        System.out.println("\n\n── Alice 第 2 次调用：验证文件在多次调用之间仍然存在 ──\n");
 
-        System.out.print("Agent: ");
-        agent.streamEvents(
-                        new UserMessage("Read /workspace/hello.txt — does it still exist?"),
-                        aliceCtx)
+        System.out.print("Agent：");
+        agent.streamEvents(new UserMessage("读取 /workspace/hello.txt —— 它还存在吗？"), aliceCtx)
                 .doOnNext(
                         event -> {
                             if (event instanceof TextBlockDeltaEvent e) {
                                 System.out.print(e.getDelta());
                             } else if (event instanceof ToolCallStartEvent e) {
-                                System.out.printf("%n  [tool] %s%n", e.getToolCallName());
+                                System.out.printf("%n  [工具] %s%n", e.getToolCallName());
                             }
                         })
                 .blockLast();
 
-        // ── Bob: separate sandbox, cannot see Alice's file ──────────────────
+        // ── Bob：独立沙箱，看不到 Alice 的文件 ──────────────────────────────
 
-        System.out.println("\n\n── Bob: separate sandbox (USER isolation) ──\n");
+        System.out.println("\n\n── Bob：独立沙箱（USER 隔离级别） ──\n");
 
         RuntimeContext bobCtx = RuntimeContext.builder().userId("bob").sessionId("bob-s1").build();
 
         Msg bobReply =
-                agent.call(
-                                new UserMessage(
-                                        "Does /workspace/hello.txt exist? Just answer yes or no."),
-                                bobCtx)
-                        .block();
-        System.out.println(
-                "Bob reply: " + (bobReply != null ? bobReply.getTextContent() : "(null)"));
-        System.out.println("(Expected: no — Bob has a separate sandbox)");
+                agent.call(new UserMessage("/workspace/hello.txt 存在吗？只回答是或否。"), bobCtx).block();
+        System.out.println("Bob 的回答：" + (bobReply != null ? bobReply.getTextContent() : "（null）"));
+        System.out.println("（预期结果：否 —— Bob 拥有独立的沙箱）");
 
         System.out.println("\n" + "=".repeat(60));
-        System.out.println("Done. Alice and Bob ran in isolated Docker containers.");
+        System.out.println("完成。Alice 和 Bob 在彼此隔离的 Docker 容器中运行。");
         System.out.println("=".repeat(60));
     }
 }
