@@ -15,47 +15,35 @@
  */
 package io.agentscope.examples.documentation2.harness.session;
 
-import io.agentscope.core.agent.AgentRun;
 import io.agentscope.core.agent.RuntimeContext;
-import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.ToolResultBlock;
-import io.agentscope.core.message.UserMessage;
-import io.agentscope.core.state.InMemoryAgentStateStore;
+import io.agentscope.core.session.SessionProjection;
+import io.agentscope.core.session.SessionViews;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolEmitter;
 import io.agentscope.core.tool.ToolParam;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.harness.agent.HarnessAgent;
+import io.agentscope.harness.agent.session.AgentSession;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import reactor.core.Disposable;
 
 /**
- * SessionInterruptResumeExample — 中断与继续（interrupt / resume 等价）。
+ * SessionInterruptResumeExample — 中断与继续（interrupt / resume），以及运行中补充要求
+ * （steer / inject）。
  *
- * <p><b>概念映射（官方文档 → 当前真实 API）</b>：
- * <ul>
- *   <li>{@code session.interrupt(runId)} ≈ {@code run.interrupt(msg)}：按句柄协作中断，
- *       在检查点停止，方法返回不代表已停下，要等 {@code run.termination()}。</li>
- *   <li>{@code session.interrupt()}（跨请求）≈ {@code agent.interrupt(userId, sessionId, msg)}：
- *       不依赖句柄，按会话身份定位正在执行的调用。</li>
- *   <li>{@code session.resume(turnId)} ≈ 同一 {@code (userId, sessionId)} 创建新 run：
- *       已持久化的会话上下文让 Agent 接着干；业务无需重发历史消息。</li>
- *   <li>{@code session.steer(task, msg)} ≈ 协作中断旧 run + 用新要求发起新 run；
- *       {@code session.inject(msg)} ≈ 同一会话追加一条消息（进入上下文，不单独调度）。</li>
- * </ul>
- *
- * <p><b>执行流程</b>：
+ * <p><b>演示内容</b>：
  * <ol>
- *   <li>Agent 启动一个长任务（工具每步 500ms，共 10 步 ≈ 5 秒）；</li>
- *   <li>约 2 秒后调用 {@code run.interrupt()}，观察终态与 {@code GenerateReason.INTERRUPTED}；</li>
- *   <li>同一会话发起新 run（resume 等价），要求继续完成；</li>
- *   <li>再演示一次 {@code agent.interrupt(userId, sessionId, msg)} 的跨请求中断。</li>
+ *   <li>{@code session.submit(...)} 提交一个长任务（工具每步 500ms，共 10 步 ≈ 5 秒）；</li>
+ *   <li>任务运行中调用 {@code session.steer(task, ...)} 补充/调整要求——关联到原任务，
+ *       下一次推理交给模型；已发出的模型请求和正在执行的工具参数不会被改写；</li>
+ *   <li>{@code session.interrupt(runId)} 请求当前执行在协作检查点停止（不是立即终止，
+ *       方法返回不代表已停下，要等 {@code await} 观察到 {@code interrupted}）；</li>
+ *   <li>{@code session.resume(turnId)} 恢复已保存的工作状态继续原任务——业务无需重发
+ *       用户消息；恢复的是 checkpoint（会话工作状态），不恢复原 Java 线程、网络请求或
+ *       工具内部进度，也不回滚工具已产生的外部效果；</li>
+ *   <li>最后用 {@code session.inspect()} 展示恢复检查（结果未知的工具调用集合）。</li>
  * </ol>
  *
  * <p><b>Run:</b>
@@ -69,11 +57,13 @@ public class SessionInterruptResumeExample {
 
     public static void main(String[] args) throws Exception {
         System.out.println("\n" + "=".repeat(60));
-        System.out.println("会话操作 — 中断与继续（interrupt / resume 等价）");
+        System.out.println("会话操作 — 中断与继续（interrupt / resume / steer）");
         System.out.println("=".repeat(60) + "\n");
 
-        Path workspace = Files.createTempDirectory("agentscope-session-interrupt");
-        InMemoryAgentStateStore stateStore = new InMemoryAgentStateStore();
+        Path workspace =
+                Files.createDirectories(
+                        Path.of(
+                                "/Users/qyz/myFiles/Temp/AgentScopeProduct/session-interrupt-resume"));
 
         Toolkit toolkit = new Toolkit();
         toolkit.registerTool(new SlowProcessTools());
@@ -85,105 +75,94 @@ public class SessionInterruptResumeExample {
                         .sysPrompt("你是一个数据处理助手。用户要求处理数据时，调用 process_dataset " + "工具，处理完成后汇报结果。")
                         .model("dashscope:qwen-plus")
                         .workspace(workspace)
-                        .stateStore(stateStore)
                         .toolkit(toolkit)
                         .maxIters(10)
                         .build();
 
         RuntimeContext ctx = RuntimeContext.builder().userId("alice").sessionId("job-001").build();
 
-        // ── 场景一：按句柄中断（session.interrupt(runId) 等价）────────────────
+        AgentSession session = agent.session(ctx);
 
-        System.out.println("── 场景一：run.interrupt() 协作中断 ────────────────────\n");
+        // ── 1. 提交长任务 ────────────────────────────────────────────────────
 
-        AgentRun<Msg> run =
-                agent.prepareCall(
-                        List.of(new UserMessage("请处理 customer_data 数据集，执行 analyze 操作。")), ctx);
-        System.out.println("已提交任务，runId=" + run.runId() + "\n");
+        System.out.println("── 1. submit：提交长任务 ───────────────────────────────\n");
 
-        AtomicReference<Msg> interruptedReply = new AtomicReference<>();
-        Disposable execution =
-                run.stream()
-                        .single()
-                        .subscribe(
-                                interruptedReply::set,
-                                err -> System.err.println("[执行错误] " + err.getMessage()));
+        AgentSession.Task task = session.submit("请处理 customer_data 数据集，执行 analyze 操作。");
+        System.out.println("turnId=" + task.turnId() + "，status=" + task.status() + "\n");
 
-        // 让 Agent 先跑一会儿（工具开始执行）
+        // 等任务进入执行（工具开始跑，才有"运行中"可以 steer / interrupt）
         Thread.sleep(2000);
-        System.out.println(">>> 用户请求停止（按 runId 中断）<<<\n");
+        System.out.println("（任务已运行约 2 秒，工具正在执行中）\n");
 
-        boolean interruptSent = run.interrupt(new UserMessage("用户取消了本次操作"));
-        System.out.println("interrupt 已发出: " + interruptSent + "（等待协作检查点生效…）");
+        // ── 2. 运行中补充要求（steer）────────────────────────────────────────
 
-        // 等待终态：interrupt 是协作式，方法返回不代表已停下
-        AgentRun.Status terminal = run.termination().block(Duration.ofSeconds(60));
-        System.out.println("中断执行终态: " + terminal);
+        System.out.println("── 2. steer：运行中补充要求 ────────────────────────────\n");
 
-        Msg stopped = interruptedReply.get();
-        if (stopped != null) {
-            System.out.println("中断回复 reason=" + stopped.getGenerateReason());
-            System.out.println("中断回复内容: " + truncate(stopped.getTextContent(), 80));
+        try {
+            AgentSession.InputReceipt receipt = session.steer(task, "补充要求：处理完把结论按摘要格式输出。");
+            System.out.println(
+                    "steer 已接受，inputId=" + receipt.inputId() + "，turn=" + receipt.turnId());
+            System.out.println("（要求会在下一次推理步骤交给模型）\n");
+        } catch (IllegalStateException e) {
+            System.out.println("steer 未生效（任务已不在运行中）: " + e.getMessage() + "\n");
         }
 
-        // ── 场景一续：同一会话新 run（resume 等价）───────────────────────────
+        // ── 3. 中断（interrupt）──────────────────────────────────────────────
 
-        System.out.println("\n── 继续原任务（resume 等价：同一会话发起新 run）────────\n");
+        System.out.println("── 3. interrupt：协作检查点停止 ────────────────────────\n");
 
-        AgentRun<Msg> resumed = agent.prepareCall(List.of(new UserMessage("继续完成刚才的数据处理任务。")), ctx);
-        Msg resumedReply = resumed.stream().single().block(Duration.ofSeconds(120));
-        System.out.println("继续执行终态: " + resumed.status());
+        /**
+         * 这种写法是重新扫描 log + active run 组装的最新快照（第 355-388 行），此时任务已运行，`runId` 才真正有值
+         * 如果使用`task.runId()` 是提交瞬间的快照，排队中必然为 null
+         * 体现框架特性：回执不等于当前状态，想知道 runId 要查 `task()`
+         */
+        String runId = session.task(task.commandId()).runId();
+        System.out.println("当前运行 runId=" + runId);
+
+        boolean sent = session.interrupt(runId);
+        System.out.println("interrupt 已接受: " + sent + "（等待协作检查点生效…）\n");
+
+        AgentSession.Task stopped = session.await(task).block(Duration.ofSeconds(60));
+        System.out.println("中断后终态: " + (stopped != null ? stopped.status() : "(await 超时)"));
+
+        // ── 4. 继续原任务（resume）───────────────────────────────────────────
+
+        System.out.println("\n── 4. resume：从 checkpoint 继续原任务 ─────────────────\n");
+
+        AgentSession.Task continued = session.resume(task.turnId());
+        System.out.println("resume 已接受，新执行 runId=" + continued.runId() + "\n");
+
+        AgentSession.Task done = session.await(continued).block(Duration.ofSeconds(180));
+        System.out.println("继续后终态: " + (done != null ? done.status() : "(await 超时)"));
+
+        // ── 5. 读取最终历史 + 恢复检查 ───────────────────────────────────────
+
+        System.out.println("\n── 5. transcript / inspect：读历史与恢复检查 ───────────\n");
+
+        SessionViews.Transcript transcript = session.transcript();
+        System.out.println("最终消息数=" + transcript.messages().size());
+        transcript
+                .messages()
+                .forEach(
+                        m ->
+                                System.out.println(
+                                        "  ["
+                                                + m.getRole()
+                                                + "] "
+                                                + truncate(m.getTextContent(), 80)));
+
+        SessionProjection projection = session.inspect();
         System.out.println(
-                "继续后回复: "
-                        + (resumedReply != null
-                                ? truncate(resumedReply.getTextContent(), 80)
-                                : "(null)"));
+                "\ninspect.uncertainToolCalls()="
+                        + projection.uncertainToolCalls()
+                        + "（结果未知的工具调用，恢复前应核对业务系统）");
 
-        execution.dispose();
-
-        // ── 场景二：跨请求中断（session.interrupt() 等价，不需要句柄）─────────
-
-        System.out.println("\n── 场景二：agent.interrupt(userId, sessionId) 跨请求中断 ──\n");
-
-        AgentRun<Msg> run2 =
-                agent.prepareCall(
-                        List.of(new UserMessage("请处理 report_data 数据集，执行 analyze 操作。")), ctx);
-        System.out.println("第二个任务已提交，runId=" + run2.runId() + "\n");
-
-        CountDownLatch done = new CountDownLatch(1);
-        AtomicReference<Msg> run2Reply = new AtomicReference<>();
-        Disposable execution2 =
-                run2.stream()
-                        .single()
-                        .subscribe(
-                                m -> {
-                                    run2Reply.set(m);
-                                    done.countDown();
-                                },
-                                err -> {
-                                    System.err.println("[执行错误] " + err.getMessage());
-                                    done.countDown();
-                                });
-
-        Thread.sleep(1500);
-        System.out.println(">>> 另一条请求链路按 (userId, sessionId) 发起中断 <<<\n");
-        agent.interrupt(ctx.getUserId(), ctx.getSessionId(), new UserMessage("新需求：改用 summary 操作。"));
-
-        // 等待场景二结束（最多 90 秒）
-        done.await(90, TimeUnit.SECONDS);
-        System.out.println("中断后的终态: " + run2.status());
-        Msg r2 = run2Reply.get();
-        if (r2 != null) {
-            System.out.println("回复 reason=" + r2.getGenerateReason());
-            System.out.println("回复内容: " + truncate(r2.getTextContent(), 80));
-        }
-
-        execution2.dispose();
+        session.close();
         agent.close();
 
         System.out.println("\n" + "=".repeat(60));
-        System.out.println("要点：interrupt 是协作式检查点停止；resume 靠同一会话的");
-        System.out.println("持久化上下文 + 新 run 实现；线程/网络/工具内部进度不可恢复。");
+        System.out.println("要点：interrupt 是协作式检查点停止；resume 从 checkpoint 继续；");
+        System.out.println("线程/网络/工具内部进度不可恢复，外部副作用也不会回滚。");
         System.out.println("=".repeat(60));
     }
 
